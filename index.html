@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CodeConstruct Python Puzzle</title>
+  <title>CodeConstruct Unity C# Puzzle</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
@@ -43,16 +43,17 @@
         <div class="sidebar-header">
           <h1>EXPLORER</h1>
         </div>
-        <div class="project-name">PYTHON TASKS</div>
+        <div class="project-name">UNITY C# TASKS</div>
         <p id="task-count" class="sidebar-hint"></p>
         <ul id="task-list" class="file-list" aria-label="Список завдань"></ul>
       </aside>
 
       <main class="editor-host">
         <header class="editor-tabs">
-          <div class="tab is-active">main.py</div>
+          <div id="active-tab" class="tab is-active">Script.cs</div>
           <div class="editor-actions">
             <button id="check-btn" class="btn btn-primary" type="button">Перевірити</button>
+            <button id="run-test-btn" class="btn" type="button">Тест примітива</button>
             <button id="reset-btn" class="btn" type="button">Скинути</button>
             <button id="shuffle-btn" class="btn" type="button">Перемішати</button>
           </div>
@@ -63,10 +64,10 @@
             <div class="panel-head">EDITOR</div>
             <div id="task-title" class="task-title"></div>
             <p id="task-description" class="hint"></p>
-            <p class="hint">Перетягни рядки в правильному порядку. Валідація перевіряє базовий синтаксис Python: блоки та відступи.</p>
-            <details class="examples-panel" aria-labelledby="examples-title">
-              <summary id="examples-title" class="examples-title">Приклади правильного виводу</summary>
-              <div id="task-examples" class="task-examples"></div>
+            <p class="hint">Перетягни C#-рядки в правильному порядку. Дужки <code>{</code> і <code>}</code> став кнопками біля слотів, а відступи поправляй стрілками.</p>
+            <details class="examples-panel" aria-labelledby="examples-title" open>
+              <summary id="examples-title" class="examples-title">Що має статися в тесті</summary>
+              <p id="task-goal" class="task-goal"></p>
             </details>
             <ol id="editor-slots" class="editor-slots"></ol>
             <div id="result" class="result" role="status" aria-live="polite"></div>
@@ -76,25 +77,33 @@
           <aside class="bank-panel">
             <div class="panel-head">LINES</div>
             <p class="hint">
-              Desktop: перетягни блоки мишкою.<br>
-              Mobile: тап по блоку, потім тап по рядку.
+              Desktop: перетягни код мишкою.<br>
+              Mobile: тап по блоку, потім тап по слоту.
             </p>
             <div id="code-bank" class="code-bank"></div>
+            <div class="panel-head test-head">TEST SCENE</div>
+            <div id="test-scene" class="test-scene" aria-label="Unity primitive test scene">
+              <div class="grid-floor" aria-hidden="true"></div>
+              <div id="test-camera" class="test-camera" hidden></div>
+              <div id="test-target" class="test-target" hidden></div>
+              <div id="test-coin" class="test-coin" hidden></div>
+              <div id="test-projectile" class="test-projectile" hidden></div>
+              <div id="test-object" class="test-object cube"></div>
+            </div>
+            <p id="test-status" class="test-status">Сцена очікує правильний скрипт.</p>
           </aside>
         </div>
       </main>
     </div>
 
     <footer class="statusbar">
-      <span>Python Puzzle Mode</span>
+      <span>Unity C# Puzzle Mode</span>
       <span>UTF-8</span>
       <span>Spaces: 4</span>
     </footer>
   </div>
 
-  <script src="tasks-data.js?v=0e7509c"></script>
-  <script src="all-lines-data.js?v=13e63e7"></script>
-  <script src="task-examples-data.js?v=20260213c"></script>
-  <script src="script.js?v=20260213d"></script>
+  <script src="tasks-data.js?v=unity-20260501"></script>
+  <script src="script.js?v=unity-20260501"></script>
 </body>
 </html>

@@ -12,6 +12,8 @@
   --muted: #8d8d8d;
   --accent: #0e639c;
   --accent-strong: #1177bb;
+  --unity: #57b6ff;
+  --unity-green: #42be65;
   --ok: #42be65;
   --error: #f44747;
 }
@@ -381,6 +383,12 @@ body {
   font: 500 0.78rem/1.4 "JetBrains Mono", "Consolas", monospace;
 }
 
+.task-goal {
+  margin: 0;
+  color: #d8d8d8;
+  font: 600 0.8rem/1.45 Manrope, "Segoe UI", sans-serif;
+}
+
 .editor-slots {
   margin: 0;
   padding: 0;
@@ -423,11 +431,16 @@ body {
 
 .code-line {
   margin: 0;
-  white-space: pre;
-  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   width: 100%;
   color: #dcdcdc;
   font: 500 0.83rem/1.35 "JetBrains Mono", "Consolas", monospace;
+}
+
+.brace-line {
+  color: #ffd166;
+  font-weight: 800;
 }
 
 .py-token-keyword {
@@ -472,6 +485,15 @@ body {
   border-radius: 5px;
   cursor: pointer;
   font-size: 0.78rem;
+}
+
+.brace-tool {
+  color: #ffd166;
+  border-color: #725f2a;
+}
+
+.brace-tool:hover:enabled {
+  background: #41361d;
 }
 
 .tool-btn:hover:enabled {
@@ -554,6 +576,298 @@ body {
   font-size: 0.8rem;
 }
 
+.test-head {
+  margin-top: 14px;
+}
+
+.test-scene {
+  position: relative;
+  height: 210px;
+  overflow: hidden;
+  border: 1px solid #3f3f46;
+  border-radius: 6px;
+  background:
+    radial-gradient(circle at 50% 28%, rgba(87, 182, 255, 0.2), transparent 34%),
+    linear-gradient(#111a22 0 55%, #151515 55% 100%);
+  perspective: 720px;
+  cursor: pointer;
+}
+
+.grid-floor {
+  position: absolute;
+  left: -15%;
+  right: -15%;
+  bottom: -26px;
+  height: 105px;
+  transform: rotateX(62deg);
+  transform-origin: bottom;
+  background-image:
+    linear-gradient(rgba(87, 182, 255, 0.16) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(87, 182, 255, 0.16) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.test-object {
+  --object-color: #4ea1ff;
+  position: absolute;
+  left: calc(50% - 30px);
+  top: 86px;
+  width: 60px;
+  height: 60px;
+  background: var(--object-color);
+  box-shadow:
+    inset -14px -16px 0 rgba(0, 0, 0, 0.25),
+    0 18px 28px rgba(0, 0, 0, 0.32);
+  transition: transform 260ms ease, opacity 260ms ease, background 180ms ease;
+}
+
+.test-object::after {
+  content: attr(data-label);
+  position: absolute;
+  left: 50%;
+  top: -28px;
+  transform: translateX(-50%);
+  color: #d6ebff;
+  white-space: nowrap;
+  font: 800 0.68rem/1 "JetBrains Mono", "Consolas", monospace;
+}
+
+.test-object.cube {
+  border-radius: 6px;
+  transform: rotateX(55deg) rotateZ(45deg);
+}
+
+.test-object.sphere {
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 30% 24%, rgba(255, 255, 255, 0.72), transparent 18%),
+    var(--object-color);
+}
+
+.test-object.is-destroyed {
+  opacity: 0;
+  transform: scale(0.25);
+}
+
+.test-target,
+.test-coin,
+.test-projectile,
+.test-camera {
+  position: absolute;
+  pointer-events: none;
+}
+
+.test-target {
+  right: 36px;
+  top: 82px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #ffcb6b;
+  box-shadow: 0 0 24px rgba(255, 203, 107, 0.45);
+}
+
+.test-coin {
+  right: 58px;
+  top: 100px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 5px solid #ffd166;
+  background: #9b6b00;
+  box-shadow: 0 0 22px rgba(255, 209, 102, 0.45);
+}
+
+.test-projectile {
+  left: 50%;
+  top: 106px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ff9cac;
+  opacity: 0;
+  box-shadow: 0 0 18px rgba(255, 156, 172, 0.55);
+}
+
+.test-camera {
+  left: 46px;
+  top: 38px;
+  width: 150px;
+  height: 104px;
+  border: 2px solid rgba(87, 182, 255, 0.7);
+  border-radius: 6px;
+  box-shadow: 0 0 18px rgba(87, 182, 255, 0.18);
+}
+
+.test-status {
+  margin: 8px 0 0;
+  min-height: 36px;
+  color: #bdbdbd;
+  font: 600 0.78rem/1.45 Manrope, "Segoe UI", sans-serif;
+}
+
+.test-scene.is-running.effect-spin .test-object {
+  animation: spin-object 1.5s linear infinite;
+}
+
+.test-scene.is-running.effect-move-right .test-object,
+.test-scene.is-running.effect-clamp .test-object {
+  animation: move-right-object 2s ease-in-out infinite alternate;
+}
+
+.test-scene.is-running.effect-bob .test-object,
+.test-scene.is-running.effect-jump .test-object {
+  animation: bob-object 1.15s ease-in-out infinite alternate;
+}
+
+.test-scene.is-running.effect-grow .test-object {
+  animation: grow-object 1.7s ease-in-out infinite alternate;
+}
+
+.test-scene.is-running.effect-ping-pong .test-object,
+.test-scene.is-running.effect-patrol .test-object {
+  animation: ping-pong-object 1.8s ease-in-out infinite alternate;
+}
+
+.test-scene.is-running.effect-look-at .test-object {
+  transform: translateX(40px) rotateZ(25deg);
+}
+
+.test-scene.is-running.effect-distance-color .test-object {
+  animation: distance-color-object 1.7s ease-in-out infinite alternate;
+}
+
+.test-scene.is-running.effect-danger .test-object {
+  animation: danger-reset-object 1.8s ease-in-out infinite;
+}
+
+.test-scene.is-running.effect-timer .test-object {
+  animation: timer-destroy-object 2.6s ease-in-out infinite;
+}
+
+.test-scene.is-running.effect-spawn .test-projectile,
+.test-scene.is-running.effect-shoot .test-projectile {
+  opacity: 1;
+  animation: projectile-object 1.2s ease-out infinite;
+}
+
+.test-scene.is-running.effect-camera .test-object {
+  animation: camera-follow-object 1.7s ease-in-out infinite alternate;
+}
+
+.test-scene.is-running.effect-camera .test-camera {
+  animation: camera-frame-object 1.7s ease-in-out infinite alternate;
+}
+
+@keyframes spin-object {
+  from {
+    transform: rotateX(55deg) rotateZ(45deg) rotateY(0deg);
+  }
+  to {
+    transform: rotateX(55deg) rotateZ(45deg) rotateY(360deg);
+  }
+}
+
+@keyframes move-right-object {
+  from {
+    transform: translateX(-52px) rotateX(55deg) rotateZ(45deg);
+  }
+  to {
+    transform: translateX(52px) rotateX(55deg) rotateZ(45deg);
+  }
+}
+
+@keyframes bob-object {
+  from {
+    transform: translateY(28px);
+  }
+  to {
+    transform: translateY(-34px);
+  }
+}
+
+@keyframes grow-object {
+  from {
+    transform: scale(0.7) rotateX(55deg) rotateZ(45deg);
+  }
+  to {
+    transform: scale(1.4) rotateX(55deg) rotateZ(45deg);
+  }
+}
+
+@keyframes ping-pong-object {
+  from {
+    transform: translateX(-64px);
+  }
+  to {
+    transform: translateX(64px);
+  }
+}
+
+@keyframes distance-color-object {
+  from {
+    background: #f44747;
+    transform: translateX(-48px);
+  }
+  to {
+    background: #42be65;
+    transform: translateX(48px);
+  }
+}
+
+@keyframes danger-reset-object {
+  0%,
+  100% {
+    transform: translateX(-58px) rotateX(55deg) rotateZ(45deg);
+  }
+  50% {
+    transform: translateX(70px) rotateX(55deg) rotateZ(45deg);
+  }
+  62% {
+    transform: translateX(-58px) rotateX(55deg) rotateZ(45deg);
+  }
+}
+
+@keyframes timer-destroy-object {
+  0%,
+  58% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  85%,
+  100% {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+}
+
+@keyframes projectile-object {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(96px);
+  }
+}
+
+@keyframes camera-follow-object {
+  from {
+    transform: translateX(-36px);
+  }
+  to {
+    transform: translateX(40px);
+  }
+}
+
+@keyframes camera-frame-object {
+  from {
+    transform: translateX(-24px);
+  }
+  to {
+    transform: translateX(28px);
+  }
+}
+
 .statusbar {
   background: #007acc;
   color: #f3fbff;
@@ -607,5 +921,80 @@ body {
   .editor-panel {
     border-right: 0;
     border-bottom: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 560px) {
+  body {
+    overflow-x: hidden;
+  }
+
+  .menu-bar {
+    gap: 8px;
+    font-size: 0.76rem;
+  }
+
+  .editor-host {
+    grid-template-rows: auto 1fr;
+  }
+
+  .editor-tabs {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tab {
+    min-height: 34px;
+  }
+
+  .editor-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    padding: 6px 8px;
+  }
+
+  .btn {
+    width: 100%;
+    height: auto;
+    min-height: 30px;
+    padding: 4px 8px;
+    white-space: normal;
+  }
+
+  .editor-panel,
+  .bank-panel {
+    padding: 12px;
+  }
+
+  .editor-slot {
+    grid-template-columns: 26px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .slot-drop-zone {
+    min-width: 0;
+  }
+
+  .slot-tools {
+    grid-column: 2;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .tool-btn {
+    width: 28px;
+    height: 26px;
+  }
+
+  .test-scene {
+    height: 205px;
+  }
+
+  .statusbar {
+    min-height: 24px;
+    height: auto;
+    justify-content: center;
+    flex-wrap: wrap;
   }
 }

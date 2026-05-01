@@ -1,25 +1,22 @@
-﻿const tasks = normalizeTasks(window.TASKS_DATA || []);
-const allLinesData = normalizeAllLines(window.ALL_LINES_DATA || []);
-const taskExamplesData = normalizeTaskExamples(window.TASK_EXAMPLES_DATA || {});
-const allLinesById = new Map(allLinesData.map((line) => [line.id, line]));
-const EXTRA_LINES_PER_TASK = 10;
-const BLOCK_HEADER_REGEX = /^(if|elif|else|for|while|def|class|try|except|finally|with|match|case)\b.*:\s*$/;
+const EXTRA_LINES_PER_TASK = 6;
 const MAX_INDENT = 6;
-const PY_KEYWORDS = new Set([
-  "False", "None", "True", "and", "as", "assert", "async", "await", "break", "case", "class",
-  "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global",
-  "if", "import", "in", "is", "lambda", "match", "nonlocal", "not", "or", "pass", "raise",
-  "return", "try", "while", "with", "yield"
+
+const CS_KEYWORDS = new Set([
+  "abstract", "as", "base", "bool", "break", "case", "catch", "class", "const", "continue",
+  "default", "do", "else", "enum", "false", "finally", "float", "for", "foreach", "if",
+  "in", "int", "is", "new", "null", "private", "protected", "public", "return", "static",
+  "string", "switch", "this", "true", "try", "using", "void", "while"
 ]);
-const PY_BUILTINS = new Set([
-  "input", "print", "int", "float", "str", "bool", "len", "range", "sum", "min", "max", "abs",
-  "round", "list", "dict", "set", "tuple", "enumerate", "zip", "sorted", "reversed", "map",
-  "filter", "any", "all"
+
+const UNITY_TYPES = new Set([
+  "MonoBehaviour", "Vector3", "Quaternion", "Transform", "GameObject", "Rigidbody",
+  "Collider", "Renderer", "Color", "Mathf", "Time", "Input", "KeyCode", "ForceMode",
+  "Random", "Debug"
 ]);
-const LOOP_KEYWORDS = new Set(["for", "while"]);
-const CONDITIONAL_BLOCK_KEYWORDS = new Set([
-  "if", "elif", "else", "for", "while", "try", "except", "finally", "with", "match", "case"
-]);
+
+const tasks = normalizeTasks(window.TASKS_DATA || []);
+const extraLines = normalizeLines(window.EXTRA_UNITY_LINES || []);
+const allLinesById = buildLineMap(tasks, extraLines);
 
 const state = {
   activeTaskIndex: 0,
@@ -27,7 +24,11 @@ const state = {
   indents: [],
   bankPoolIds: [],
   bankOrder: [],
-  selectedBlockId: null
+  selectedBlockId: null,
+  solved: false,
+  testRunning: false,
+  testClicks: 0,
+  testScore: 0
 };
 
 const editorSlotsEl = document.getElementById("editor-slots");
@@ -37,22 +38,31 @@ const previewEl = document.getElementById("solution-preview");
 const checkBtn = document.getElementById("check-btn");
 const resetBtn = document.getElementById("reset-btn");
 const shuffleBtn = document.getElementById("shuffle-btn");
+const runTestBtn = document.getElementById("run-test-btn");
 const taskListEl = document.getElementById("task-list");
 const taskTitleEl = document.getElementById("task-title");
 const taskDescriptionEl = document.getElementById("task-description");
-const taskExamplesEl = document.getElementById("task-examples");
+const taskGoalEl = document.getElementById("task-goal");
 const taskCountEl = document.getElementById("task-count");
+const activeTabEl = document.getElementById("active-tab");
+const testSceneEl = document.getElementById("test-scene");
+const testObjectEl = document.getElementById("test-object");
+const testTargetEl = document.getElementById("test-target");
+const testCoinEl = document.getElementById("test-coin");
+const testProjectileEl = document.getElementById("test-projectile");
+const testCameraEl = document.getElementById("test-camera");
+const testStatusEl = document.getElementById("test-status");
 
 init();
 
 function init() {
   if (!tasks.length) {
     disableActions();
-    setResult("Не знайдено жодного завдання. Перевір файл tasks-data.js.", "error");
+    setResult("Не знайдено жодного Unity-завдання. Перевір файл tasks-data.js.", "error");
     return;
   }
 
-  taskCountEl.textContent = `${tasks.length} завдання`;
+  taskCountEl.textContent = `${tasks.length} Unity-завдання`;
   renderTaskList();
   loadTask(0);
 
@@ -85,7 +95,7 @@ function init() {
     if (!blockId || Number.isNaN(slotIndex)) {
       return;
     }
-    placeBlock(blockId, slotIndex);
+    placeCodeBlock(blockId, slotIndex);
   });
 
   codeBankEl.addEventListener("dragstart", (event) => {
@@ -114,16 +124,7 @@ function init() {
       if (Number.isNaN(slotIndex)) {
         return;
       }
-      const action = actionBtn.dataset.action;
-      if (action === "indent-left") {
-        updateIndent(slotIndex, -1);
-      }
-      if (action === "indent-right") {
-        updateIndent(slotIndex, 1);
-      }
-      if (action === "clear-slot") {
-        clearSlot(slotIndex);
-      }
+      handleSlotAction(actionBtn.dataset.action, slotIndex);
       return;
     }
 
@@ -137,15 +138,16 @@ function init() {
     }
 
     if (state.selectedBlockId) {
-      placeBlock(state.selectedBlockId, slotIndex);
+      placeCodeBlock(state.selectedBlockId, slotIndex);
       return;
     }
 
     const occupied = state.slots[slotIndex];
-    if (occupied) {
+    if (occupied?.kind === "code") {
       state.slots[slotIndex] = null;
       state.indents[slotIndex] = 0;
-      state.selectedBlockId = occupied;
+      state.selectedBlockId = occupied.lineId;
+      markDirty();
       render();
     }
   });
@@ -162,57 +164,147 @@ function init() {
     loadTask(index);
   });
 
+  testSceneEl.addEventListener("click", triggerSceneInteraction);
   checkBtn.addEventListener("click", checkSolution);
   resetBtn.addEventListener("click", resetPuzzle);
+  runTestBtn.addEventListener("click", runPrimitiveTest);
   shuffleBtn.addEventListener("click", () => {
     state.bankOrder = shuffle(state.bankOrder.slice());
     state.selectedBlockId = null;
     renderBank();
   });
+
+  window.render_game_to_text = renderGameToText;
+  window.advanceTime = (ms = 1000 / 60) => {
+    const steps = Math.max(1, Math.round(ms / (1000 / 60)));
+    for (let i = 0; i < steps; i += 1) {
+      // The preview is CSS-driven; this hook still gives automated tests a stable surface.
+    }
+    return renderGameToText();
+  };
 }
 
 function disableActions() {
   checkBtn.disabled = true;
   resetBtn.disabled = true;
   shuffleBtn.disabled = true;
+  runTestBtn.disabled = true;
 }
 
 function loadTask(index) {
   state.activeTaskIndex = clamp(index, 0, tasks.length - 1);
   const task = getActiveTask();
 
-  state.slots = new Array(task.lines.length).fill(null);
-  state.indents = new Array(task.lines.length).fill(0);
-  state.bankPoolIds = generateTaskBankIds(task, EXTRA_LINES_PER_TASK);
+  state.slots = new Array(task.steps.length).fill(null);
+  state.indents = new Array(task.steps.length).fill(0);
+  state.bankPoolIds = generateTaskBankIds(task, index);
   state.bankOrder = shuffle(state.bankPoolIds.slice());
   state.selectedBlockId = null;
+  state.solved = false;
+  resetTestState();
 
+  activeTabEl.textContent = task.fileName;
   taskTitleEl.textContent = formatTaskLabel(task);
   taskDescriptionEl.textContent = task.description;
-  renderTaskExamples(task);
+  taskGoalEl.textContent = task.testGoal;
   previewEl.hidden = true;
 
-  setResult("Збери програму в редакторі та перевір синтаксис.", "neutral");
+  setResult("Склади C#-скрипт: порядок рядків, дужки та відступи мають збігатися.", "neutral");
   renderTaskList();
   render();
+  renderTestScene();
 }
 
 function getActiveTask() {
   return tasks[state.activeTaskIndex];
 }
 
-function getActiveLineMap() {
-  const map = new Map();
-  for (const id of state.bankPoolIds) {
-    const line = allLinesById.get(id);
-    if (line) {
-      map.set(id, line);
+function handleSlotAction(action, slotIndex) {
+  if (action === "indent-left") {
+    updateIndent(slotIndex, -1);
+  }
+  if (action === "indent-right") {
+    updateIndent(slotIndex, 1);
+  }
+  if (action === "brace-open") {
+    setBrace(slotIndex, "{");
+  }
+  if (action === "brace-close") {
+    setBrace(slotIndex, "}");
+  }
+  if (action === "clear-slot") {
+    clearSlot(slotIndex);
+  }
+}
+
+function placeCodeBlock(blockId, slotIndex) {
+  if (!allLinesById.has(blockId)) {
+    return;
+  }
+  removeCodeBlockFromSlots(blockId);
+  state.slots[slotIndex] = { kind: "code", lineId: blockId };
+  state.selectedBlockId = null;
+  markDirty();
+  render();
+}
+
+function removeCodeBlockFromSlots(blockId) {
+  for (let i = 0; i < state.slots.length; i += 1) {
+    if (state.slots[i]?.kind === "code" && state.slots[i].lineId === blockId) {
+      state.slots[i] = null;
+      state.indents[i] = 0;
     }
   }
-  for (const line of getActiveTask().lines) {
-    map.set(line.id, line);
+}
+
+function setBrace(slotIndex, brace) {
+  state.slots[slotIndex] = { kind: "brace", brace };
+  state.selectedBlockId = null;
+  markDirty();
+  render();
+}
+
+function clearSlot(slotIndex) {
+  state.slots[slotIndex] = null;
+  state.indents[slotIndex] = 0;
+  state.selectedBlockId = null;
+  markDirty();
+  render();
+}
+
+function updateIndent(slotIndex, diff) {
+  if (!state.slots[slotIndex]) {
+    return;
   }
-  return map;
+  state.indents[slotIndex] = clamp(state.indents[slotIndex] + diff, 0, MAX_INDENT);
+  markDirty();
+  renderEditor();
+}
+
+function resetPuzzle() {
+  const task = getActiveTask();
+  state.slots = new Array(task.steps.length).fill(null);
+  state.indents = new Array(task.steps.length).fill(0);
+  state.bankOrder = shuffle(state.bankPoolIds.slice());
+  state.selectedBlockId = null;
+  state.solved = false;
+  resetTestState();
+  previewEl.hidden = true;
+  setResult("Скинула редактор. Збери скрипт знову.", "neutral");
+  render();
+  renderTestScene();
+}
+
+function markDirty() {
+  state.solved = false;
+  state.testRunning = false;
+  previewEl.hidden = true;
+}
+
+function resetTestState() {
+  state.testRunning = false;
+  state.testClicks = 0;
+  state.testScore = 0;
 }
 
 function renderTaskList() {
@@ -238,12 +330,11 @@ function render() {
 }
 
 function renderEditor() {
-  const activeTask = getActiveTask();
-  const lineById = getActiveLineMap();
-
+  const task = getActiveTask();
   editorSlotsEl.innerHTML = "";
-  for (let i = 0; i < activeTask.lines.length; i += 1) {
-    const slotLineId = state.slots[i];
+
+  for (let i = 0; i < task.steps.length; i += 1) {
+    const slotValue = state.slots[i];
     const slot = document.createElement("li");
     slot.className = "editor-slot";
 
@@ -255,53 +346,76 @@ function renderEditor() {
     zone.className = "slot-drop-zone";
     zone.dataset.slot = String(i);
 
-    if (slotLineId) {
+    if (slotValue) {
       const code = document.createElement("code");
-      code.className = "code-line";
+      code.className = slotValue.kind === "brace" ? "code-line brace-line" : "code-line";
       const indentSpaces = " ".repeat(state.indents[i] * 4);
-      renderHighlightedCode(code, `${indentSpaces}${lineById.get(slotLineId).text}`);
+      if (slotValue.kind === "brace") {
+        code.textContent = `${indentSpaces}${slotValue.brace}`;
+      } else {
+        const line = allLinesById.get(slotValue.lineId);
+        renderHighlightedCode(code, `${indentSpaces}${line.text}`);
+      }
       zone.appendChild(code);
     } else {
       zone.classList.add("is-empty");
-      zone.textContent = "Перетягни блок сюди";
+      zone.textContent = "Код або дужка";
     }
 
     const tools = document.createElement("div");
     tools.className = "slot-tools";
 
-    const leftBtn = createToolButton("←", "indent-left", i);
-    leftBtn.disabled = !slotLineId || state.indents[i] === 0;
+    const leftBtn = createToolButton("←", "indent-left", i, "Зменшити відступ");
+    leftBtn.disabled = !slotValue || state.indents[i] === 0;
 
-    const rightBtn = createToolButton("→", "indent-right", i);
-    rightBtn.disabled = !slotLineId || state.indents[i] >= MAX_INDENT;
+    const rightBtn = createToolButton("→", "indent-right", i, "Збільшити відступ");
+    rightBtn.disabled = !slotValue || state.indents[i] >= MAX_INDENT;
 
-    const clearBtn = createToolButton("×", "clear-slot", i);
-    clearBtn.disabled = !slotLineId;
-    clearBtn.title = "Повернути блок праворуч";
+    const openBraceBtn = createToolButton("{", "brace-open", i, "Вставити відкривну дужку");
+    const closeBraceBtn = createToolButton("}", "brace-close", i, "Вставити закривну дужку");
+    const clearBtn = createToolButton("×", "clear-slot", i, "Очистити слот");
+    clearBtn.disabled = !slotValue;
 
-    tools.append(leftBtn, rightBtn, clearBtn);
+    tools.append(leftBtn, rightBtn, openBraceBtn, closeBraceBtn, clearBtn);
     slot.append(index, zone, tools);
     editorSlotsEl.appendChild(slot);
   }
 }
 
-function renderBank() {
-  const lineById = getActiveLineMap();
+function createToolButton(label, action, slotIndex, title) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = action.startsWith("brace") ? "tool-btn brace-tool" : "tool-btn";
+  button.dataset.action = action;
+  button.dataset.slot = String(slotIndex);
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  button.textContent = label;
+  return button;
+}
 
+function renderBank() {
   codeBankEl.innerHTML = "";
-  const used = new Set(state.slots.filter(Boolean));
+  const used = new Set(
+    state.slots
+      .filter((slot) => slot?.kind === "code")
+      .map((slot) => slot.lineId)
+  );
   const available = state.bankOrder.filter((id) => !used.has(id));
 
   if (available.length === 0) {
     const donePlaceholder = document.createElement("div");
     donePlaceholder.className = "bank-placeholder";
-    donePlaceholder.textContent = "Усі блоки в редакторі. Натисни «Перевірити» або поправ порядок.";
+    donePlaceholder.textContent = "Усі кодові блоки в редакторі. Дужки додаються тільки кнопками біля слотів.";
     codeBankEl.appendChild(donePlaceholder);
     return;
   }
 
   for (const id of available) {
-    const line = lineById.get(id);
+    const line = allLinesById.get(id);
+    if (!line) {
+      continue;
+    }
     const block = document.createElement("button");
     block.type = "button";
     block.className = "code-block";
@@ -320,632 +434,235 @@ function renderBank() {
   }
 }
 
-function placeBlock(blockId, slotIndex) {
-  const lineById = getActiveLineMap();
-  if (!lineById.has(blockId)) {
-    return;
-  }
-  removeBlockFromSlots(blockId);
-  state.slots[slotIndex] = blockId;
-  state.selectedBlockId = null;
-  render();
-}
-
-function removeBlockFromSlots(blockId) {
-  for (let i = 0; i < state.slots.length; i += 1) {
-    if (state.slots[i] === blockId) {
-      state.slots[i] = null;
-      state.indents[i] = 0;
-    }
-  }
-}
-
-function clearSlot(slotIndex) {
-  state.slots[slotIndex] = null;
-  state.indents[slotIndex] = 0;
-  render();
-}
-
-function updateIndent(slotIndex, diff) {
-  if (!state.slots[slotIndex]) {
-    return;
-  }
-  state.indents[slotIndex] = clamp(state.indents[slotIndex] + diff, 0, MAX_INDENT);
-  renderEditor();
-}
-
 function checkSolution() {
-  const issues = [];
-
-  if (state.slots.some((id) => !id)) {
-    issues.push("Заповни всі рядки редактора.");
-  }
-
-  issues.push(...validateSelectedTaskLines());
-
-  const assembled = buildAssembledProgram();
-  issues.push(...validateProgramSemantics(assembled));
+  const issues = validateSolution();
 
   if (issues.length === 0) {
-    setResult("Готово. Базовий синтаксис Python і залежності імен коректні.", "ok");
+    state.solved = true;
+    setResult("Готово. Порядок, C#-дужки та відступи збігаються з Unity-скриптом.", "ok");
     renderSolutionPreview();
-    return;
+    renderTestScene();
+    return true;
   }
 
-  const previewIssues = issues.slice(0, 5).join("\n");
-  const extra = issues.length > 5 ? `\n...і ще ${issues.length - 5} помилок.` : "";
+  state.solved = false;
+  const previewIssues = issues.slice(0, 6).join("\n");
+  const extra = issues.length > 6 ? `\n...і ще ${issues.length - 6} помилок.` : "";
   setResult(`${previewIssues}${extra}`, "error");
   previewEl.hidden = true;
+  renderTestScene();
+  return false;
 }
 
-function validateSelectedTaskLines() {
+function validateSolution() {
   const issues = [];
-  const taskLineIds = new Set(getActiveTask().lines.map((line) => line.id));
+  const task = getActiveTask();
 
-  for (let i = 0; i < state.slots.length; i += 1) {
-    const id = state.slots[i];
-    if (!id) {
+  for (let i = 0; i < task.steps.length; i += 1) {
+    const expected = task.steps[i];
+    const actual = state.slots[i];
+    const row = i + 1;
+
+    if (!actual) {
+      issues.push(`Рядок ${row}: слот порожній.`);
       continue;
     }
-    if (!taskLineIds.has(id)) {
-      issues.push(`Рядок ${i + 1}: це зайвий блок з іншого завдання.`);
+
+    if (actual.kind !== expected.kind) {
+      const needed = expected.kind === "brace" ? "структурна дужка кнопкою" : "рядок коду з банку";
+      issues.push(`Рядок ${row}: тут потрібен ${needed}.`);
+      continue;
+    }
+
+    if (expected.kind === "code" && actual.lineId !== expected.lineId) {
+      issues.push(`Рядок ${row}: неправильний рядок коду.`);
+    }
+
+    if (expected.kind === "brace" && actual.brace !== expected.brace) {
+      issues.push(`Рядок ${row}: потрібна дужка '${expected.brace}'.`);
+    }
+
+    if (state.indents[i] !== expected.indent) {
+      issues.push(`Рядок ${row}: відступ має бути ${expected.indent}, зараз ${state.indents[i]}.`);
     }
   }
 
+  issues.push(...validateBraceBalance(buildProgramRows()));
   return dedupe(issues);
 }
 
-function buildAssembledProgram() {
-  const lineById = getActiveLineMap();
+function validateBraceBalance(rows) {
+  const issues = [];
+  const stack = [];
 
+  for (const row of rows) {
+    if (row.kind !== "brace") {
+      continue;
+    }
+    if (row.brace === "{") {
+      stack.push(row);
+    } else if (stack.length === 0) {
+      issues.push(`Рядок ${row.lineNumber}: закривна дужка без відкривної.`);
+    } else {
+      stack.pop();
+    }
+  }
+
+  if (stack.length > 0) {
+    const last = stack[stack.length - 1];
+    issues.push(`Рядок ${last.lineNumber}: відкривна дужка не закрита.`);
+  }
+
+  return issues;
+}
+
+function buildProgramRows() {
   return state.slots
-    .map((id, index) => {
-      if (!id) {
+    .map((slot, index) => {
+      if (!slot) {
         return null;
       }
-      const line = lineById.get(id);
+      if (slot.kind === "brace") {
+        return {
+          lineNumber: index + 1,
+          kind: "brace",
+          brace: slot.brace,
+          text: slot.brace,
+          indent: state.indents[index]
+        };
+      }
+      const line = allLinesById.get(slot.lineId);
       return {
         lineNumber: index + 1,
-        text: line.text,
-        indent: state.indents[index],
-        analysis: parseLineAnalysis(line.text)
+        kind: "code",
+        lineId: slot.lineId,
+        text: line?.text || "",
+        indent: state.indents[index]
       };
     })
     .filter(Boolean);
 }
 
-function validateProgramSemantics(lines) {
-  const issues = [];
-  issues.push(...validateBlockSyntax(lines));
-  issues.push(...validateKeywordChains(lines));
-  issues.push(...validateNameDependencies(lines));
-  issues.push(...validateRecursiveBaseCases(lines));
-  return dedupe(issues);
+function renderSolutionPreview() {
+  const source = buildProgramRows()
+    .map((row) => `${" ".repeat(row.indent * 4)}${row.text}`)
+    .join("\n");
+
+  previewEl.hidden = false;
+  previewEl.textContent = source;
 }
 
-function validateBlockSyntax(lines) {
-  const issues = [];
-  if (lines.length === 0) {
-    return issues;
-  }
-
-  if (lines[0].indent !== 0) {
-    issues.push("Рядок 1: програма має починатися без відступу.");
-  }
-
-  const indentStack = [0];
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    const prev = i > 0 ? lines[i - 1] : null;
-
-    if (line.indent < 0) {
-      issues.push(`Рядок ${line.lineNumber}: некоректний відступ.`);
-      continue;
-    }
-
-    if (prev && line.indent > prev.indent) {
-      if (!prev.analysis.opensBlock) {
-        issues.push(`Рядок ${line.lineNumber}: зайвий відступ без попереднього блоку.`);
-      }
-      if (line.indent !== prev.indent + 1) {
-        issues.push(`Рядок ${line.lineNumber}: відступ має збільшуватись тільки на 1 рівень.`);
-      }
-      indentStack.push(line.indent);
-      continue;
-    }
-
-    while (indentStack.length > 1 && line.indent < indentStack[indentStack.length - 1]) {
-      indentStack.pop();
-    }
-
-    if (line.indent !== indentStack[indentStack.length - 1]) {
-      issues.push(`Рядок ${line.lineNumber}: некоректний рівень відступу.`);
-    }
-
-    if (prev && prev.analysis.opensBlock && line.indent <= prev.indent) {
-      issues.push(`Рядок ${prev.lineNumber}: після ':' потрібен вкладений рядок.`);
-    }
-  }
-
-  const lastLine = lines[lines.length - 1];
-  if (lastLine.analysis.opensBlock) {
-    issues.push(`Рядок ${lastLine.lineNumber}: після ':' бракує вкладеного блоку.`);
-  }
-
-  return dedupe(issues);
-}
-
-function validateKeywordChains(lines) {
-  const issues = [];
-  const blockStack = [];
-  const ifChains = new Set();
-  const tryChains = new Map();
-
-  for (const line of lines) {
-    const keyword = line.analysis.keyword;
-
-    while (blockStack.length > 0 && line.indent <= blockStack[blockStack.length - 1].indent) {
-      blockStack.pop();
-    }
-
-    for (const indent of [...ifChains]) {
-      if (indent > line.indent) {
-        ifChains.delete(indent);
-      }
-    }
-    for (const [indent, state] of [...tryChains.entries()]) {
-      if (indent > line.indent) {
-        if (!state.hasHandler) {
-          issues.push(`Рядок ${state.lineNumber}: після try потрібен except або finally.`);
-        }
-        tryChains.delete(indent);
-      }
-    }
-
-    if (ifChains.has(line.indent) && keyword !== "elif" && keyword !== "else") {
-      ifChains.delete(line.indent);
-    }
-
-    if (tryChains.has(line.indent) && keyword !== "except" && keyword !== "finally") {
-      const pendingTry = tryChains.get(line.indent);
-      if (!pendingTry.hasHandler) {
-        issues.push(`Рядок ${pendingTry.lineNumber}: після try потрібен except або finally.`);
-      }
-      tryChains.delete(line.indent);
-    }
-
-    if ((keyword === "elif" || keyword === "else") && !ifChains.has(line.indent)) {
-      issues.push(`Рядок ${line.lineNumber}: '${keyword}' без відповідного if.`);
-    }
-    if (keyword === "elif") {
-      ifChains.add(line.indent);
-    } else if (keyword === "else") {
-      ifChains.delete(line.indent);
-    } else if (keyword === "if") {
-      ifChains.add(line.indent);
-    }
-
-    if ((keyword === "except" || keyword === "finally") && !tryChains.has(line.indent)) {
-      issues.push(`Рядок ${line.lineNumber}: '${keyword}' без відповідного try.`);
-    }
-    if (keyword === "except") {
-      const state = tryChains.get(line.indent);
-      if (state) {
-        state.hasHandler = true;
-      }
-    } else if (keyword === "finally") {
-      const state = tryChains.get(line.indent);
-      if (state) {
-        state.hasHandler = true;
-      }
-      tryChains.delete(line.indent);
-    } else if (keyword === "try") {
-      tryChains.set(line.indent, { hasHandler: false, lineNumber: line.lineNumber });
-    }
-
-    const insideFunction = blockStack.some((block) => block.keyword === "def");
-    const insideLoop = blockStack.some((block) => LOOP_KEYWORDS.has(block.keyword));
-
-    if (line.analysis.isReturn && !insideFunction) {
-      issues.push(`Рядок ${line.lineNumber}: return може бути лише всередині def.`);
-    }
-    if (line.analysis.isBreak && !insideLoop) {
-      issues.push(`Рядок ${line.lineNumber}: break може бути лише всередині циклу.`);
-    }
-    if (line.analysis.isContinue && !insideLoop) {
-      issues.push(`Рядок ${line.lineNumber}: continue може бути лише всередині циклу.`);
-    }
-
-    if (line.analysis.opensBlock) {
-      blockStack.push({ indent: line.indent, keyword });
-    }
-  }
-
-  for (const state of tryChains.values()) {
-    if (!state.hasHandler) {
-      issues.push(`Рядок ${state.lineNumber}: після try потрібен except або finally.`);
-    }
-  }
-
-  return dedupe(issues);
-}
-
-function validateNameDependencies(lines) {
-  const issues = [];
-  const globalKnown = new Set(PY_BUILTINS);
-  const scopeStack = [{ indent: -1, kind: "module", locals: new Set() }];
-  const blockStack = [];
-  const conditionalScopes = [];
-
-  for (const line of lines) {
-    while (blockStack.length > 0 && line.indent <= blockStack[blockStack.length - 1].indent) {
-      blockStack.pop();
-    }
-    while (conditionalScopes.length > 0 && line.indent <= conditionalScopes[conditionalScopes.length - 1].indent) {
-      conditionalScopes.pop();
-    }
-    while (scopeStack.length > 1 && line.indent <= scopeStack[scopeStack.length - 1].indent) {
-      scopeStack.pop();
-    }
-
-    const visible = collectVisibleNames(globalKnown, scopeStack, conditionalScopes);
-    for (const name of line.analysis.uses) {
-      if (!visible.has(name)) {
-        issues.push(`Рядок ${line.lineNumber}: '${name}' використано до оголошення.`);
-      }
-    }
-
-    for (const name of line.analysis.defines) {
-      registerDefinition(name, globalKnown, scopeStack, conditionalScopes);
-    }
-
-    if (line.analysis.opensBlock && line.analysis.keyword === "def") {
-      scopeStack.push({
-        indent: line.indent,
-        kind: "def",
-        locals: new Set(line.analysis.defParams)
-      });
-    } else if (line.analysis.opensBlock && line.analysis.keyword === "class") {
-      scopeStack.push({
-        indent: line.indent,
-        kind: "class",
-        locals: new Set()
-      });
-    }
-
-    if (line.analysis.opensBlock) {
-      blockStack.push({ indent: line.indent, keyword: line.analysis.keyword });
-      if (CONDITIONAL_BLOCK_KEYWORDS.has(line.analysis.keyword)) {
-        conditionalScopes.push({
-          indent: line.indent,
-          names: new Set()
-        });
-      }
-    }
-  }
-
-  return dedupe(issues);
-}
-
-function validateRecursiveBaseCases(lines) {
-  const issues = [];
-  const defStack = [];
-
-  function finalizeContext(context) {
-    if (!context) {
-      return;
-    }
-    if (!context.baseCaseRecursiveLines.length || !context.topLevelPlainReturnLines.length) {
-      return;
-    }
-    for (const lineNumber of context.baseCaseRecursiveLines) {
-      issues.push(
-        `Рядок ${lineNumber}: підозріла рекурсія в базовій умові. Перевір базовий return у функції '${context.name}'.`
-      );
-    }
-  }
-
-  for (const line of lines) {
-    while (defStack.length > 0 && line.indent <= defStack[defStack.length - 1].indent) {
-      finalizeContext(defStack.pop());
-    }
-
-    const activeDef = defStack[defStack.length - 1];
-    if (activeDef) {
-      while (
-        activeDef.baseIfStack.length > 0 &&
-        line.indent <= activeDef.baseIfStack[activeDef.baseIfStack.length - 1].indent
-      ) {
-        activeDef.baseIfStack.pop();
-      }
-
-      if (line.analysis.keyword === "if" && line.indent === activeDef.indent + 1) {
-        const condition = extractIfCondition(line.text);
-        if (isLikelyBaseCaseCondition(condition, activeDef.params)) {
-          activeDef.baseIfStack.push({ indent: line.indent });
-        }
-      }
-
-      if (line.analysis.isReturn) {
-        const isRecursiveReturn = hasFunctionCall(line.text, activeDef.name);
-        if (
-          isRecursiveReturn &&
-          activeDef.baseIfStack.length > 0 &&
-          line.indent > activeDef.baseIfStack[activeDef.baseIfStack.length - 1].indent
-        ) {
-          activeDef.baseCaseRecursiveLines.push(line.lineNumber);
-        } else if (!isRecursiveReturn && line.indent === activeDef.indent + 1) {
-          activeDef.topLevelPlainReturnLines.push(line.lineNumber);
-        }
-      }
-    }
-
-    if (line.analysis.keyword === "def" && line.analysis.opensBlock) {
-      const defName = line.analysis.defines[0];
-      if (defName) {
-        defStack.push({
-          name: defName,
-          indent: line.indent,
-          params: line.analysis.defParams.slice(),
-          baseIfStack: [],
-          baseCaseRecursiveLines: [],
-          topLevelPlainReturnLines: []
-        });
-      }
-    }
-  }
-
-  while (defStack.length > 0) {
-    finalizeContext(defStack.pop());
-  }
-
-  return dedupe(issues);
-}
-
-function extractIfCondition(text) {
-  const match = text.trim().match(/^if\s+(.+)\s*:\s*$/u);
-  return match ? match[1] : "";
-}
-
-function isLikelyBaseCaseCondition(condition, params) {
-  if (!condition) {
-    return false;
-  }
-  const cleaned = stripStringLiterals(condition).replace(/\s+/gu, " ").trim();
-  if (!cleaned) {
-    return false;
-  }
-  const paramPattern = params.length
-    ? params.map((name) => escapeRegExp(name)).join("|")
-    : "[A-Za-z_][A-Za-z0-9_]*";
-  const leftPattern = new RegExp(`\\b(?:${paramPattern})\\s*(?:<=|<|==)\\s*(?:0|1)\\b`, "u");
-  const rightPattern = new RegExp(`\\b(?:0|1)\\s*(?:>=|>|==)\\s*(?:${paramPattern})\\b`, "u");
-  return leftPattern.test(cleaned) || rightPattern.test(cleaned);
-}
-
-function hasFunctionCall(text, functionName) {
-  if (!functionName) {
-    return false;
-  }
-  const cleaned = stripStringLiterals(text);
-  const callPattern = new RegExp(`\\b${escapeRegExp(functionName)}\\s*\\(`, "u");
-  return callPattern.test(cleaned);
-}
-
-function escapeRegExp(source) {
-  return source.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-
-function collectVisibleNames(globalKnown, scopeStack, conditionalScopes) {
-  const names = new Set(globalKnown);
-  for (const scope of scopeStack) {
-    for (const name of scope.locals) {
-      names.add(name);
-    }
-  }
-  for (const scope of conditionalScopes) {
-    for (const name of scope.names) {
-      names.add(name);
-    }
-  }
-  return names;
-}
-
-function registerDefinition(name, globalKnown, scopeStack, conditionalScopes) {
-  if (!name) {
+function runPrimitiveTest() {
+  if (!checkSolution()) {
+    testStatusEl.textContent = "Тест заблоковано: спершу виправ скрипт.";
     return;
   }
-  if (scopeStack.length > 1) {
-    scopeStack[scopeStack.length - 1].locals.add(name);
+
+  state.testRunning = true;
+  state.testClicks = 0;
+  state.testScore = 0;
+  renderTestScene();
+
+  const task = getActiveTask();
+  setResult(`Тест запущено: ${task.testGoal}`, "ok");
+}
+
+function renderTestScene() {
+  const task = getActiveTask();
+  const runtime = task.runtime || {};
+  const effect = runtime.effect || "idle";
+  const primitive = runtime.primitive || task.primitive || "cube";
+  const isRunning = state.testRunning && state.solved;
+
+  testSceneEl.className = `test-scene effect-${effect}${isRunning ? " is-running" : ""}`;
+  testObjectEl.className = `test-object ${primitive}${isRunning ? " is-running" : ""}`;
+  testObjectEl.style.setProperty("--object-color", runtime.color || "#4ea1ff");
+  testObjectEl.dataset.label = runtime.label || task.title;
+
+  testTargetEl.hidden = !["look-at", "distance-color", "patrol", "camera"].includes(effect);
+  testCoinEl.hidden = !["collect", "win"].includes(effect);
+  testProjectileEl.hidden = !["spawn", "shoot"].includes(effect);
+  testCameraEl.hidden = effect !== "camera";
+
+  if (!state.solved) {
+    testStatusEl.textContent = "Сцена очікує правильний скрипт.";
     return;
   }
-  if (conditionalScopes.length > 0) {
-    conditionalScopes[conditionalScopes.length - 1].names.add(name);
+
+  if (!isRunning) {
+    testStatusEl.textContent = "Скрипт правильний. Натисни «Тест примітива».";
     return;
   }
-  globalKnown.add(name);
+
+  testStatusEl.textContent = getRuntimeStatus(task, effect);
 }
 
-function parseLineAnalysis(rawText) {
-  const text = rawText.trim();
-  const keywordMatch = text.match(/^([A-Za-z_][A-Za-z0-9_]*)\b/);
-  const keyword = keywordMatch ? keywordMatch[1] : "";
-  const analysis = {
-    keyword,
-    opensBlock: isBlockHeader(text),
-    defines: [],
-    uses: [],
-    defParams: [],
-    isReturn: /^return\b/u.test(text),
-    isBreak: /^break\b/u.test(text),
-    isContinue: /^continue\b/u.test(text)
-  };
-
-  for (const expression of extractFStringExpressions(text)) {
-    addNames(expression, analysis.uses);
+function getRuntimeStatus(task, effect) {
+  if (effect === "click-color") {
+    return state.testClicks > 0
+      ? `Клік змінено: колір оновлено ${state.testClicks} раз.`
+      : "Клікни по сцені, щоб змінити колір куба.";
   }
-
-  const sanitized = stripStringLiterals(text).replace(/#.*/u, "");
-  const withoutAttributes = sanitized.replace(/\.[A-Za-z_][A-Za-z0-9_]*/gu, "");
-
-  if (keyword === "import") {
-    const importBody = sanitized.replace(/^import\s+/u, "");
-    for (const part of splitArgs(importBody)) {
-      const importMatch = part.trim().match(/^([A-Za-z_][A-Za-z0-9_.]*)(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?$/u);
-      if (!importMatch) {
-        continue;
-      }
-      const alias = importMatch[2] || importMatch[1].split(".")[0];
-      analysis.defines.push(alias);
-    }
-    return finalizeAnalysis(analysis);
+  if (effect === "health") {
+    const health = Math.max(0, 3 - state.testClicks);
+    return health > 0
+      ? `Health: ${health}. Клікни по кубу, щоб завдати удар.`
+      : "Health: 0. Куб знищено.";
   }
-
-  if (keyword === "from") {
-    const fromMatch = sanitized.match(/^from\s+([A-Za-z_][A-Za-z0-9_.]*)\s+import\s+(.+)$/u);
-    if (fromMatch) {
-      for (const item of splitArgs(fromMatch[2])) {
-        const trimmed = item.trim();
-        if (!trimmed || trimmed === "*") {
-          continue;
-        }
-        const importMatch = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?$/u);
-        if (!importMatch) {
-          continue;
-        }
-        analysis.defines.push(importMatch[2] || importMatch[1]);
-      }
-    }
-    return finalizeAnalysis(analysis);
+  if (effect === "collect") {
+    return state.testScore > 0
+      ? `Score: ${state.testScore}. Монетку зібрано.`
+      : "Клікни по сцені, щоб симулювати trigger з монеткою.";
   }
-
-  if (keyword === "def") {
-    const defMatch = withoutAttributes.match(/^def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)\s*:/u);
-    if (defMatch) {
-      analysis.defines.push(defMatch[1]);
-      const params = splitArgs(defMatch[2]);
-      for (const param of params) {
-        const trimmed = param.trim();
-        if (!trimmed) {
-          continue;
-        }
-        const parts = trimmed.split("=");
-        const lhs = parts[0].trim().replace(/^\*+/u, "");
-        const paramNameMatch = lhs.match(/^([A-Za-z_][A-Za-z0-9_]*)/u);
-        if (paramNameMatch) {
-          analysis.defParams.push(paramNameMatch[1]);
-        }
-        if (parts.length > 1) {
-          addNames(parts.slice(1).join("=").trim(), analysis.uses);
-        }
-      }
-    }
-    return finalizeAnalysis(analysis);
+  if (effect === "win") {
+    return state.testScore >= 3
+      ? "Score: 3. WIN: куб зелений, гра зупинена."
+      : `Score: ${state.testScore}. Клікай, щоб зібрати 3 монети.`;
   }
-
-  if (keyword === "class") {
-    const classMatch = withoutAttributes.match(/^class\s+([A-Za-z_][A-Za-z0-9_]*)(?:\((.*)\))?\s*:/u);
-    if (classMatch) {
-      analysis.defines.push(classMatch[1]);
-      if (classMatch[2]) {
-        addNames(classMatch[2], analysis.uses);
-      }
-    }
-    return finalizeAnalysis(analysis);
-  }
-
-  if (keyword === "for") {
-    const forMatch = withoutAttributes.match(/^for\s+(.+?)\s+in\s+(.+)\s*:\s*$/u);
-    if (forMatch) {
-      for (const target of parseAssignmentTargets(forMatch[1])) {
-        analysis.defines.push(target);
-      }
-      addNames(forMatch[2], analysis.uses);
-    }
-    return finalizeAnalysis(analysis);
-  }
-
-  const augAssignMatch = withoutAttributes.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*[+\-*/%&|^]=\s*(.+)$/u);
-  if (augAssignMatch) {
-    analysis.uses.push(augAssignMatch[1]);
-    addNames(augAssignMatch[2], analysis.uses);
-    analysis.defines.push(augAssignMatch[1]);
-    return finalizeAnalysis(analysis);
-  }
-
-  const assignMatch = withoutAttributes.match(/^(.+?)\s*=\s*(.+)$/u);
-  if (assignMatch && !/==|!=|<=|>=/u.test(withoutAttributes)) {
-    for (const target of parseAssignmentTargets(assignMatch[1])) {
-      analysis.defines.push(target);
-    }
-    addNames(assignMatch[2], analysis.uses);
-    return finalizeAnalysis(analysis);
-  }
-
-  addNames(withoutAttributes, analysis.uses);
-  return finalizeAnalysis(analysis);
+  return task.testGoal;
 }
 
-function finalizeAnalysis(analysis) {
-  analysis.defines = dedupe(analysis.defines);
-  analysis.uses = dedupe(analysis.uses.filter((name) => !analysis.defParams.includes(name)));
-  analysis.defParams = dedupe(analysis.defParams);
-  return analysis;
-}
+function triggerSceneInteraction() {
+  if (!state.testRunning || !state.solved) {
+    return;
+  }
 
-function parseAssignmentTargets(lhs) {
-  const cleaned = lhs.replace(/[()\[\]]/gu, " ");
-  const chunks = cleaned.split(",").map((part) => part.trim()).filter(Boolean);
-  const names = [];
-  for (const chunk of chunks) {
-    const match = chunk.match(/^([A-Za-z_][A-Za-z0-9_]*)$/u);
-    if (match) {
-      names.push(match[1]);
-    }
+  const effect = getActiveTask().runtime?.effect;
+  if (effect === "click-color") {
+    state.testClicks += 1;
+    const palette = ["#f78c6c", "#82aaff", "#c3e88d", "#ffcb6b", "#c792ea"];
+    testObjectEl.style.setProperty("--object-color", palette[state.testClicks % palette.length]);
   }
-  return names;
-}
 
-function splitArgs(rawArgs) {
-  const args = [];
-  let current = "";
-  let depth = 0;
-  for (const char of rawArgs) {
-    if (char === "," && depth === 0) {
-      args.push(current);
-      current = "";
-      continue;
-    }
-    if (char === "(" || char === "[" || char === "{") {
-      depth += 1;
-    } else if (char === ")" || char === "]" || char === "}") {
-      depth = Math.max(0, depth - 1);
-    }
-    current += char;
+  if (effect === "health") {
+    state.testClicks = Math.min(3, state.testClicks + 1);
+    testObjectEl.classList.toggle("is-destroyed", state.testClicks >= 3);
   }
-  if (current.trim() !== "") {
-    args.push(current);
-  }
-  return args;
-}
 
-function addNames(fragment, collector) {
-  const tokens = fragment.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/gu) || [];
-  for (const token of tokens) {
-    if (!PY_KEYWORDS.has(token)) {
-      collector.push(token);
+  if (effect === "collect") {
+    state.testScore = 1;
+    testCoinEl.hidden = true;
+  }
+
+  if (effect === "win") {
+    state.testScore = Math.min(3, state.testScore + 1);
+    if (state.testScore >= 3) {
+      testObjectEl.style.setProperty("--object-color", "#42be65");
+      testSceneEl.classList.add("is-won");
+      testCoinEl.hidden = true;
     }
   }
+
+  testStatusEl.textContent = getRuntimeStatus(getActiveTask(), effect);
 }
 
 function renderHighlightedCode(element, text) {
-  element.innerHTML = highlightPythonLine(text);
+  element.innerHTML = highlightCSharpLine(text);
 }
 
-function highlightPythonLine(text) {
+function highlightCSharpLine(text) {
   const tokenPattern =
-    /#[^\n]*|(?:\b[furbFURB]{0,4})?(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_]*\b|==|!=|<=|>=|\+=|-=|\*=|\/=|%=|\/\/=|\*\*=|->|[+\-*/%<>=:()[\]{},.]|\S/gu;
+    /\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b\d+(?:\.\d+)?f?\b|\b[A-Za-z_][A-Za-z0-9_]*\b|==|!=|<=|>=|\+\+|--|\+=|-=|\*=|\/=|&&|\|\||=>|[+\-*/%<>=!&|:;()[\]{},.]|\S/gu;
 
   let html = "";
   let lastIndex = 0;
@@ -961,21 +678,21 @@ function highlightPythonLine(text) {
     }
 
     let cls = "";
-    if (token.startsWith("#")) {
+    if (token.startsWith("//")) {
       cls = "py-token-comment";
-    } else if (/^(?:[furbFURB]{0,4})?(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')$/u.test(token)) {
+    } else if (/^"(?:\\.|[^"\\])*"$|^'(?:\\.|[^'\\])*'$/u.test(token)) {
       cls = "py-token-string";
-    } else if (/^\d+(?:\.\d+)?$/u.test(token)) {
+    } else if (/^\d+(?:\.\d+)?f?$/u.test(token)) {
       cls = "py-token-number";
     } else if (/^[A-Za-z_][A-Za-z0-9_]*$/u.test(token)) {
-      if (PY_KEYWORDS.has(token)) {
+      if (CS_KEYWORDS.has(token)) {
         cls = "py-token-keyword";
-      } else if (PY_BUILTINS.has(token)) {
+      } else if (UNITY_TYPES.has(token)) {
         cls = "py-token-builtin";
       } else if (isFunctionCallAt(text, end)) {
         cls = "py-token-function";
       }
-    } else if (/^(==|!=|<=|>=|\+=|-=|\*=|\/=|%=|\/\/=|\*\*=|->|[+\-*/%<>=:])$/u.test(token)) {
+    } else if (/^(==|!=|<=|>=|\+\+|--|\+=|-=|\*=|\/=|&&|\|\||=>|[+\-*/%<>=!&|:])$/u.test(token)) {
       cls = "py-token-operator";
     }
 
@@ -995,245 +712,127 @@ function isFunctionCallAt(text, fromIndex) {
   return /^\s*\(/u.test(tail);
 }
 
-function escapeHtml(text) {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+function generateTaskBankIds(task, taskIndex) {
+  const taskIds = task.lines.map((line) => line.id);
+  const shuffledExtra = seededShuffle(extraLines, taskIndex + 11)
+    .filter((line) => !taskIds.includes(line.id))
+    .slice(0, EXTRA_LINES_PER_TASK)
+    .map((line) => line.id);
+  return [...taskIds, ...shuffledExtra];
 }
 
-function extractFStringExpressions(text) {
-  const expressions = [];
-  const stringMatches =
-    text.match(/\b[fF][rRuUbB]*"(?:\\.|[^"\\])*"|\b[fF][rRuUbB]*'(?:\\.|[^'\\])*'/gu) || [];
+function normalizeTasks(rawTasks) {
+  return rawTasks.map((task, index) => {
+    const lines = normalizeLines(task.lines || []);
+    return {
+      id: String(task.id || `task-${index + 1}`),
+      number: Number(task.number || index + 1),
+      title: String(task.title || `UnityTask${index + 1}`),
+      fileName: String(task.fileName || `Task${index + 1}.cs`),
+      primitive: String(task.primitive || "cube"),
+      description: String(task.description || ""),
+      testGoal: String(task.testGoal || ""),
+      runtime: task.runtime || {},
+      lines,
+      steps: (task.steps || []).map((step) => ({
+        kind: step.kind === "brace" ? "brace" : "code",
+        lineId: step.lineId ? String(step.lineId) : "",
+        brace: step.brace === "}" ? "}" : "{",
+        indent: Number(step.indent || 0)
+      }))
+    };
+  });
+}
 
-  for (const matched of stringMatches) {
-    const noPrefix = matched.replace(/^[fFrRuUbB]+/u, "");
-    if (noPrefix.length < 2) {
-      continue;
-    }
-    const body = noPrefix.slice(1, -1);
-    const braceMatches = body.match(/\{[^{}]+\}/gu) || [];
-    for (const brace of braceMatches) {
-      expressions.push(brace.slice(1, -1));
+function normalizeLines(lines) {
+  return lines.map((line) => ({
+    id: String(line.id),
+    text: String(line.text)
+  }));
+}
+
+function buildLineMap(taskList, extras) {
+  const map = new Map();
+  for (const task of taskList) {
+    for (const line of task.lines) {
+      map.set(line.id, line);
     }
   }
-
-  return expressions;
+  for (const line of extras) {
+    map.set(line.id, line);
+  }
+  return map;
 }
 
-function stripStringLiterals(text) {
-  return text.replace(/(?:\b[furbFURB]+)?"(?:\\.|[^"\\])*"|(?:\b[furbFURB]+)?'(?:\\.|[^'\\])*'/gu, "");
+function formatTaskLabel(task) {
+  return `${String(task.number).padStart(2, "0")} ${task.title}`;
 }
 
-function isBlockHeader(rawText) {
-  const text = rawText.trim();
-  return BLOCK_HEADER_REGEX.test(text);
+function setResult(message, type) {
+  resultEl.textContent = message;
+  resultEl.className = `result is-${type}`;
+}
+
+function renderGameToText() {
+  const task = getActiveTask();
+  const payload = {
+    mode: "unity-code-construct",
+    task: task.id,
+    file: task.fileName,
+    solved: state.solved,
+    selectedBlockId: state.selectedBlockId,
+    slots: state.slots.map((slot, index) => ({
+      row: index + 1,
+      indent: state.indents[index],
+      kind: slot?.kind || "empty",
+      value: slot?.kind === "code" ? allLinesById.get(slot.lineId)?.text : slot?.brace || ""
+    })),
+    test: {
+      running: state.testRunning,
+      primitive: task.runtime?.primitive || task.primitive,
+      effect: task.runtime?.effect || "idle",
+      clicks: state.testClicks,
+      score: state.testScore
+    }
+  };
+  return JSON.stringify(payload);
+}
+
+function shuffle(items) {
+  const copy = items.slice();
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function seededShuffle(items, seed) {
+  const copy = items.slice();
+  let value = seed || 1;
+  const random = () => {
+    value = (value * 9301 + 49297) % 233280;
+    return value / 233280;
+  };
+
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }
 
 function dedupe(items) {
   return [...new Set(items)];
 }
 
-function renderSolutionPreview() {
-  const lineById = getActiveLineMap();
-
-  const code = state.slots
-    .map((id, index) => {
-      const line = lineById.get(id);
-      return `${" ".repeat(state.indents[index] * 4)}${line.text}`;
-    })
-    .join("\n");
-  previewEl.hidden = false;
-  previewEl.textContent = code;
-}
-
-function resetPuzzle() {
-  const task = getActiveTask();
-  state.slots = new Array(task.lines.length).fill(null);
-  state.indents = new Array(task.lines.length).fill(0);
-  state.selectedBlockId = null;
-  state.bankOrder = shuffle(state.bankPoolIds.slice());
-  render();
-  setResult("Стан очищено. Збери програму ще раз.", "neutral");
-  previewEl.hidden = true;
-}
-
-function setResult(message, type) {
-  resultEl.textContent = message;
-  resultEl.classList.remove("is-ok", "is-error");
-  if (type === "ok") {
-    resultEl.classList.add("is-ok");
-  }
-  if (type === "error") {
-    resultEl.classList.add("is-error");
-  }
-}
-
-function createToolButton(label, action, slotIndex) {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "tool-btn";
-  btn.dataset.action = action;
-  btn.dataset.slot = String(slotIndex);
-  btn.textContent = label;
-  return btn;
-}
-
-function shuffle(arr) {
-  const array = arr.slice();
-  for (let i = array.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [array[i], array[j]] = [array[j], array[i]];
-  }
-  return array;
-}
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function normalizeTasks(input) {
-  if (!Array.isArray(input)) {
-    return [];
-  }
-
-  return input
-    .map((task) => {
-      const lines = Array.isArray(task.lines)
-        ? task.lines
-            .filter((line) => line && typeof line.text === "string" && line.text.trim() !== "")
-            .map((line, index) => ({
-              id: typeof line.id === "string" ? line.id : `line-${index + 1}`,
-              text: line.text.trim(),
-              canonicalIndent: Number.isInteger(line.canonicalIndent) ? line.canonicalIndent : 0
-            }))
-        : [];
-
-      return {
-        id: String(task.id || "task"),
-        number: Number(task.number),
-        title: String(task.title || "Завдання"),
-        description: String(task.description || "Збери програму з блоків коду."),
-        lines
-      };
-    })
-    .filter((task) => task.lines.length > 0);
-}
-
-function formatTaskLabel(task) {
-  const number = Number(task?.number);
-  if (Number.isFinite(number)) {
-    return `Завдання ${number}`;
-  }
-  return String(task?.title || "Завдання");
-}
-
-function normalizeTaskExamples(input) {
-  if (!input || typeof input !== "object") {
-    return {};
-  }
-
-  const normalized = {};
-  for (const [taskId, rawExamples] of Object.entries(input)) {
-    if (!Array.isArray(rawExamples)) {
-      continue;
-    }
-    const cleaned = rawExamples
-      .map((example) => {
-        if (typeof example === "string") {
-          const output = example.trim();
-          if (!output) {
-            return null;
-          }
-          return { input: [], output };
-        }
-
-        if (!example || typeof example !== "object") {
-          return null;
-        }
-
-        const input = Array.isArray(example.input)
-          ? example.input.map((value) => String(value)).filter((value) => value !== "")
-          : [];
-        const output = String(example.output || "").trim();
-        if (!output) {
-          return null;
-        }
-        return { input, output };
-      })
-      .filter(Boolean)
-      .slice(0, 3);
-
-    if (cleaned.length > 0) {
-      normalized[String(taskId)] = cleaned;
-    }
-  }
-  return normalized;
-}
-
-function renderTaskExamples(task) {
-  if (!taskExamplesEl) {
-    return;
-  }
-
-  const fallback = [{ input: [], output: "Приклад виводу недоступний." }];
-  const examples = taskExamplesData[task.id] || fallback;
-
-  taskExamplesEl.innerHTML = "";
-  examples.slice(0, 3).forEach((example, index) => {
-    const item = document.createElement("article");
-    item.className = "task-example-item";
-
-    const label = document.createElement("p");
-    label.className = "task-example-label";
-    label.textContent = `Приклад ${index + 1}`;
-
-    const inputTitle = document.createElement("p");
-    inputTitle.className = "task-example-subtitle";
-    inputTitle.textContent = "Ввід:";
-
-    const inputCode = document.createElement("pre");
-    inputCode.className = "task-example-code";
-    inputCode.textContent = example.input.length > 0 ? example.input.join("\n") : "(немає)";
-
-    const outputTitle = document.createElement("p");
-    outputTitle.className = "task-example-subtitle";
-    outputTitle.textContent = "Вивід:";
-
-    const code = document.createElement("pre");
-    code.className = "task-example-code";
-    code.textContent = example.output;
-
-    item.append(label, inputTitle, inputCode, outputTitle, code);
-    taskExamplesEl.appendChild(item);
-  });
-}
-
-function normalizeAllLines(input) {
-  if (!Array.isArray(input)) {
-    return [];
-  }
-
-  return input
-    .map((line) => ({
-      id: String(line?.id || ""),
-      text: typeof line?.text === "string" ? line.text.trim() : "",
-      taskId: String(line?.taskId || "")
-    }))
-    .filter((line) => line.id && line.text);
-}
-
-function generateTaskBankIds(task, extrasCount) {
-  const ownIds = task.lines.map((line) => line.id);
-  const ownIdSet = new Set(ownIds);
-  const ownTextSet = new Set(task.lines.map((line) => line.text));
-
-  const foreignCandidates = allLinesData
-    .filter((line) => line.taskId !== String(task.id) && !ownIdSet.has(line.id) && !ownTextSet.has(line.text))
-    .map((line) => line.id);
-
-  const shuffledForeign = shuffle(foreignCandidates);
-  const extraIds = shuffledForeign.slice(0, Math.max(0, Math.min(extrasCount, shuffledForeign.length)));
-  return ownIds.concat(extraIds);
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
