@@ -907,15 +907,52 @@ body {
 
   .workbench {
     grid-template-columns: 1fr;
+    min-width: 0;
   }
 
-  .activity-bar,
-  .sidebar {
+  .activity-bar {
     display: none;
+  }
+
+  .sidebar {
+    display: block;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 10px 12px;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .sidebar-header {
+    display: none;
+  }
+
+  .project-name {
+    margin-top: 0;
+  }
+
+  .file-list {
+    display: flex;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+    max-height: none;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .file-list li {
+    flex: 0 0 auto;
+  }
+
+  .task-btn {
+    white-space: nowrap;
   }
 
   .editor-grid {
     grid-template-columns: 1fr;
+    min-width: 0;
   }
 
   .editor-panel {
@@ -936,6 +973,7 @@ body {
 
   .editor-host {
     grid-template-rows: auto 1fr;
+    min-width: 0;
   }
 
   .editor-tabs {
@@ -965,6 +1003,7 @@ body {
   .editor-panel,
   .bank-panel {
     padding: 12px;
+    min-width: 0;
   }
 
   .editor-slot {
